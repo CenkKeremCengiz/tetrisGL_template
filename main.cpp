@@ -401,9 +401,8 @@ void initVBO()
 
 void init() 
 {
-    glDisable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
-    //glEnable(GL_CULL_FACE);
+    glEnable(GL_CULL_FACE);
 
     // polygon offset is used to prevent z-fighting between the cube and its borders
     glPolygonOffset(0.5, 0.5);
@@ -543,12 +542,12 @@ void keyboard(GLFWwindow* window, int key, int scancode, int action, int mods)
         glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
 
-    if (key == GLFW_KEY_H && action == GLFW_PRESS){
-        targetCameraAngle -= 90.0f;
-    }
-
-    if (key == GLFW_KEY_K && action == GLFW_PRESS){
-        targetCameraAngle += 90.0f;
+    if (action == GLFW_PRESS) {
+        if (key == GLFW_KEY_H) {
+            targetCameraAngle -= 90.0f;
+        } else if (key == GLFW_KEY_K) {
+            targetCameraAngle += 90.0f;
+        }
     }
 }
 
@@ -556,10 +555,15 @@ void mainLoop(GLFWwindow* window)
 {
     while (!glfwWindowShouldClose(window))
     {
-        if (targetCameraAngle != cameraAngle) {
+        if (fabs(targetCameraAngle - cameraAngle) > 0.1f) {
 
-            if(targetCameraAngle < 0) cameraAngle -= rotationSpeed;
-            else cameraAngle += rotationSpeed;
+            if (cameraAngle < targetCameraAngle) {
+                cameraAngle += rotationSpeed;
+                if (cameraAngle > targetCameraAngle) cameraAngle = targetCameraAngle;
+            } else {
+                cameraAngle -= rotationSpeed;
+                if (cameraAngle < targetCameraAngle) cameraAngle = targetCameraAngle;
+            }
             
             float cameraAngleRad = glm::radians(cameraAngle);
 
