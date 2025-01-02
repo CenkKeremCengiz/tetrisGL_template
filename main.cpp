@@ -49,10 +49,15 @@ GLint lightPosLoc[2];
 GLint kdLoc[2];
 
 // **********************************************
+glm::vec3 cubeGroupPosition(0.0f, 0.0f, 0.0f);
 float cameraAngle      = 0.0f;
 float targetCameraAngle = 0.0f;
 float cameraRadius     = 24.0f;
 float rotationSpeed = 1.5f;
+
+const float GAME_AREA_HALF_SIZE = 4.5f;
+
+const float CUBE_GROUP_HALF_SIZE = 1.5f;
 
 // **********************************************
 
@@ -63,7 +68,7 @@ glm::mat4 modelingMatrix = glm::mat4(1.f);
 glm::vec3 eyePos = glm::vec3(0, 0, 24);
 glm::vec3 lightPos = glm::vec3(0, 0, 7);
 
-//glm::vec3 kdGround(0.334, 0.288, 0.635); // this is the ground color in the demo
+glm::vec3 kdGround(0.334, 0.288, 0.635); 
 glm::vec3 kdCubes(0.86, 0.11, 0.31);
 
 int activeProgramIndex = 0;
@@ -77,6 +82,17 @@ struct Character {
 };
 
 std::map<GLchar, Character> Characters;
+
+glm::vec3 getCameraRightVector()
+{
+    float cameraAngleRad = glm::radians(cameraAngle);
+    glm::vec3 right;
+    right.x = sin(cameraAngleRad);
+    right.y = 0.0f;
+    right.z = -cos(cameraAngleRad);
+    right = glm::normalize(right);
+    return right;
+}
 
 // For reading GLSL files
 bool ReadDataFromFile(
@@ -431,6 +447,32 @@ void drawCubeEdges()
     }
 }
 
+void drawGround()
+{
+    for (int i = 0; i < 9; ++i) {
+        for (int j = 0; j < 9; ++j) {
+            glm::mat4 model = glm::mat4(1.0f);
+
+            model = glm::translate(model, glm::vec3(i, -0.5f, j));
+
+            model = glm::translate(model, glm::vec3(-4.5f, -5.0f,  -4.5f));
+
+            model = glm::scale(model, glm::vec3(1.0f, 0.5f, 1.0f));
+
+            glUseProgram(gProgram[0]);
+            glUniformMatrix4fv(modelingMatrixLoc[0], 1, GL_FALSE,  glm::value_ptr(model));
+            glUniform3fv(kdLoc[0], 1, glm::value_ptr(kdGround));
+            drawCube();
+
+            glUseProgram(gProgram[1]);
+            glUniformMatrix4fv(modelingMatrixLoc[1], 1, GL_FALSE,  glm::value_ptr(model));
+            glm::vec3 edgeColor(1.0f, 1.0f, 1.0f);
+            glUniform3fv(kdLoc[1], 1, glm::value_ptr(edgeColor));
+            drawCubeEdges();
+        }
+    }
+}
+
 void renderText(const std::string& text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color)
 {
     // Activate corresponding render state	
@@ -488,18 +530,24 @@ void display()
     glClearStencil(0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
+    drawGround();
+    float initialCubeHeight = 7.0f;
+
     for(int i=0; i<3; i++){
         for(int j=0; j<3; j++){
             for(int k=0; k<3; k++){
-                glm::vec3 offset(i - 1.5f, j - 1.5f, k - 1.5f);
-                glm::mat4 model = glm::translate(glm::mat4(1.0f), offset);
+                glm::vec3 offset(i - 1.5f, j - 1.5f +  initialCubeHeight, k - 1.5f);
+                glm::mat4 model = glm::translate(glm::mat4(1.5f), cubeGroupPosition + offset);
 
                 glUseProgram(gProgram[0]);
                 glUniformMatrix4fv(modelingMatrixLoc[0], 1, GL_FALSE, glm::value_ptr(model));
+                glUniform3fv(kdLoc[0], 1, glm::value_ptr(kdCubes));
                 drawCube();
 
                 glUseProgram(gProgram[1]);
                 glUniformMatrix4fv(modelingMatrixLoc[1], 1, GL_FALSE, glm::value_ptr(model));
+                glm::vec3 edgeColor(1.0f, 1.0f, 1.0f);
+                glUniform3fv(kdLoc[1], 1, glm::value_ptr(edgeColor));
                 drawCubeEdges();
             }
         }
@@ -548,6 +596,14 @@ void keyboard(GLFWwindow* window, int key, int scancode, int action, int mods)
         } else if (key == GLFW_KEY_K) {
             targetCameraAngle += 90.0f;
         }
+        else if (key == GLFW_KEY_A){
+            glm::vec3 right = getCameraRightVector();
+            cubeGroupPosition -= right * 1.0f;
+        }
+        else if (key == GLFW_KEY_D){
+            glm::vec3 right = getCameraRightVector();
+            cubeGroupPosition += right * 1.0f;
+        }
     }
 }
 
@@ -577,13 +633,13 @@ void mainLoop(GLFWwindow* window)
             {
                 glUseProgram(gProgram[i]);
                 glUniformMatrix4fv(viewingMatrixLoc[i], 1, GL_FALSE, glm::value_ptr(viewingMatrix));
+                glUniform3fv(eyePosLoc[i], 1, glm::value_ptr(eyePos));
             }
 
         }
-        else{
-            targetCameraAngle = 0.00f;
-            cameraAngle = 0.00f;
-        }
+
+        cubeGroupPosition.x = glm::clamp(cubeGroupPosition.x, -GAME_AREA_HALF_SIZE + CUBE_GROUP_HALF_SIZE, GAME_AREA_HALF_SIZE - CUBE_GROUP_HALF_SIZE);
+        cubeGroupPosition.z = glm::clamp(cubeGroupPosition.z, -GAME_AREA_HALF_SIZE + CUBE_GROUP_HALF_SIZE, GAME_AREA_HALF_SIZE - CUBE_GROUP_HALF_SIZE);
 
         display();
         glfwSwapBuffers(window);
