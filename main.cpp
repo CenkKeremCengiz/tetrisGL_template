@@ -53,11 +53,13 @@ glm::vec3 cubeGroupPosition(0.0f, 0.0f, 0.0f);
 float cameraAngle      = 0.0f;
 float targetCameraAngle = 0.0f;
 float cameraRadius     = 24.0f;
-float rotationSpeed = 1.5f;
+float rotationSpeed = 3.0f;
 
 const float GAME_AREA_HALF_SIZE = 4.5f;
 
 const float CUBE_GROUP_HALF_SIZE = 1.5f;
+
+float lightYOffset = 5.0f;
 
 // **********************************************
 
@@ -611,7 +613,11 @@ void mainLoop(GLFWwindow* window)
 {
     while (!glfwWindowShouldClose(window))
     {
+        bool cameraMoved = false;
+
         if (fabs(targetCameraAngle - cameraAngle) > 0.1f) {
+
+            cameraMoved = true;
 
             if (cameraAngle < targetCameraAngle) {
                 cameraAngle += rotationSpeed;
@@ -636,6 +642,18 @@ void mainLoop(GLFWwindow* window)
                 glUniform3fv(eyePosLoc[i], 1, glm::value_ptr(eyePos));
             }
 
+            glm::vec3 forward = glm::normalize(-glm::vec3(viewingMatrix[2]));
+            lightPos = eyePos + forward * 7.0f + glm::vec3(0.0f, lightYOffset, 0.0f);
+
+            cameraMoved = true;
+        }
+
+        if (cameraMoved) {
+            for (int i = 0; i < 2; ++i)
+            {
+                glUseProgram(gProgram[i]);
+                glUniform3fv(lightPosLoc[i], 1, glm::value_ptr(lightPos));
+            }
         }
 
         cubeGroupPosition.x = glm::clamp(cubeGroupPosition.x, -GAME_AREA_HALF_SIZE + CUBE_GROUP_HALF_SIZE, GAME_AREA_HALF_SIZE - CUBE_GROUP_HALF_SIZE);
@@ -646,6 +664,8 @@ void mainLoop(GLFWwindow* window)
         glfwPollEvents();
     }
 }
+
+
 
 int main(int argc, char** argv)   // Create Main Function For Bringing It All Together
 {
