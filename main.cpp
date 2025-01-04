@@ -49,7 +49,7 @@ GLint lightPosLoc[2];
 GLint kdLoc[2];
 
 // **********************************************
-glm::vec3 cubeGroupPosition(0.0f, 0.0f, 0.0f);
+glm::vec3 cubeGroupPosition(0.0f, 7.0f, 0.0f); // İlk küp başlangıç pozisyonu
 float cameraAngle      = 0.0f;
 float targetCameraAngle = 0.0f;
 float cameraRadius     = 24.0f;
@@ -72,6 +72,10 @@ glm::vec3 lightPos = glm::vec3(0, 0, 7);
 
 glm::vec3 kdGround(0.334, 0.288, 0.635); 
 glm::vec3 kdCubes(0.86, 0.11, 0.31);
+
+float lastDropTime = 0.0f;     // Son düşme zamanı (başlangıçta sıfır)
+float cubeDropInterval = 0.5f; // Küplerin düşme aralığı (0.5 saniye)
+bool gameRunning = true;       // Oyun başlangıçta çalışır durumda
 
 int activeProgramIndex = 0;
 
@@ -416,6 +420,44 @@ void initVBO()
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(gVertexDataSizeInBytes));
 }
+void initCamera()
+{
+    // cameraAngle üzerinden kamera konumunu hesapla
+    float cameraAngleRad = glm::radians(cameraAngle);  // cameraAngle = 0 ise sin(0)=0, cos(0)=1
+    float camX = cameraRadius * cos(cameraAngleRad);
+    float camZ = cameraRadius * sin(cameraAngleRad);
+
+    // Kameranın dünya koordinatındaki konumu
+    eyePos = glm::vec3(camX, 0.0f, camZ);
+
+    // LookAt matrisi
+    viewingMatrix = glm::lookAt(
+        eyePos,                // Kamera konumu
+        glm::vec3(0, 0, 0),    // Hedef
+        glm::vec3(0, 1, 0)     // Yukarı vektör (Dünya'da Y ekseni)
+    );
+
+    // Kamera ayarlarını shader programlarına aktar
+    for (int i = 0; i < 2; ++i) {
+        glUseProgram(gProgram[i]);
+        glUniformMatrix4fv(viewingMatrixLoc[i], 1, GL_FALSE, glm::value_ptr(viewingMatrix));
+        glUniform3fv(eyePosLoc[i], 1, glm::value_ptr(eyePos));
+    }
+}
+
+void initLight()
+{
+    // Işık pozisyonunu yeniden hesapla
+    glm::vec3 forward = glm::normalize(-glm::vec3(viewingMatrix[2])); // Kamera yönü
+    lightPos = eyePos + forward * 7.0f + glm::vec3(0.0f, lightYOffset, 0.0f);
+
+    // Işık pozisyonunu shader programlarına gönder
+    for (int i = 0; i < 2; ++i) {
+        glUseProgram(gProgram[i]);
+        glUniform3fv(lightPosLoc[i], 1, glm::value_ptr(lightPos));
+    }
+}
+
 
 void init() 
 {
@@ -429,6 +471,8 @@ void init()
     initShaders();
     initVBO();
     initFonts(gWidth, gHeight);
+    initCamera();
+    initLight();
 }
 
 void drawCube()
@@ -449,6 +493,35 @@ void drawCubeEdges()
     }
 }
 
+
+void drawFallingCube() {
+    // 3×3×3 bloc
+    for(int i=0; i<3; i++){
+        for(int j=0; j<3; j++){
+            for(int k=0; k<3; k++){
+                glm::vec3 offset(i - 1.5f, j - 1.5f, k - 1.5f);
+                glm::mat4 model = glm::translate(glm::mat4(1.0f), cubeGroupPosition + offset);
+
+                // Dolgu
+                glUseProgram(gProgram[0]);
+                glUniformMatrix4fv(modelingMatrixLoc[0], 1, GL_FALSE, glm::value_ptr(model));
+                glUniform3fv(kdLoc[0], 1, glm::value_ptr(kdCubes));
+                drawCube();
+
+                // Kenar
+                glUseProgram(gProgram[1]);
+                glUniformMatrix4fv(modelingMatrixLoc[1], 1, GL_FALSE, glm::value_ptr(model));
+                glm::vec3 edgeColor(1.0f, 1.0f, 1.0f);
+                glUniform3fv(kdLoc[1], 1, glm::value_ptr(edgeColor));
+                drawCubeEdges();
+            }
+        }
+    }
+}
+
+
+
+
 void drawGround()
 {
     for (int i = 0; i < 9; ++i) {
@@ -457,7 +530,7 @@ void drawGround()
 
             model = glm::translate(model, glm::vec3(i, -0.5f, j));
 
-            model = glm::translate(model, glm::vec3(-4.5f, -5.0f,  -4.5f));
+            model = glm::translate(model, glm::vec3(-4.5f, -6.5f,  -4.5f));
 
             model = glm::scale(model, glm::vec3(1.0f, 0.5f, 1.0f));
 
@@ -474,6 +547,85 @@ void drawGround()
         }
     }
 }
+
+class BoundingBox {
+public:
+    glm::vec3 min; // Min köşe noktası
+    glm::vec3 max; // Max köşe noktası
+
+    BoundingBox(const glm::vec3& position, const glm::vec3& size) {
+        min = position - size * 0.5f;
+        max = position + size * 0.5f;
+    }
+
+    // Çarpışma kontrolü: İki kutunun kesişip kesişmediğini kontrol eder
+    bool intersects(const BoundingBox& other) const {
+        return (min.x <= other.max.x && max.x >= other.min.x) &&
+               (min.y <= other.max.y && max.y >= other.min.y) &&
+               (min.z <= other.max.z && max.z >= other.min.z);
+    }
+
+    // Bir noktanın bu kutunun içinde olup olmadığını kontrol eder
+    bool contains(const glm::vec3& point) const {
+        return (point.x >= min.x && point.x <= max.x) &&
+               (point.y >= min.y && point.y <= max.y) &&
+               (point.z >= min.z && point.z <= max.z);
+    }
+};
+
+BoundingBox createGroundBoundingBox() {
+    // Zemin ortalama Y değeri: -5.25 (üst: -5.0, alt: -5.5).
+    // X ve Z boyutu 9×9, Y boyutu 0.5.
+    glm::vec3 groundCenter(0.0f, -6.8f, 0.0f);
+    glm::vec3 groundSize(9.0f, 0.5f, 9.0f);
+    return BoundingBox(groundCenter, groundSize);
+}
+
+std::vector<BoundingBox> settledBlocks; // Sabitlenen blokların bounding box'ları
+
+bool checkGroundCollision(const BoundingBox& cubeBox) {
+    BoundingBox groundBox = createGroundBoundingBox();
+    return cubeBox.intersects(groundBox);
+}
+
+bool checkBlockCollision(const BoundingBox& cubeBox) {
+    for (const auto& block : settledBlocks) {
+        if (cubeBox.intersects(block)) {
+            return true; 
+        }
+    }
+    return false;
+}
+
+
+void updateCubePosition(float currentTime) {
+    // Belirli zaman aralığında (cubeDropInterval=0.5s) bir adım düş
+    if (currentTime - lastDropTime >= cubeDropInterval && gameRunning) {
+        // 1) Küpün yeni pozisyonu
+        glm::vec3 newPosition = cubeGroupPosition;
+        newPosition.y -= 1.0f;  // 1 birim düş
+
+        // 2) Bu yeni pozisyon için bounding box
+        BoundingBox currentCube(newPosition, glm::vec3(2.99, 2.99f, 2.99f));
+
+        // 3) Zemin veya diğer bloklarla çarpışma var mı?
+        if (checkGroundCollision(currentCube) || checkBlockCollision(currentCube)) {
+            // Küp sabitlenir:
+            // (Eski pozisyonla bounding box ekliyoruz)
+            settledBlocks.push_back(BoundingBox(cubeGroupPosition, glm::vec3(2.99f,2.99f,2.99f)));
+
+            // Yeni küp oluştur
+            cubeGroupPosition = glm::vec3(0.0f, 7.0f, 0.0f); // Yukarıdan yeniden başlat
+            lastDropTime = currentTime;   // Timer reset
+            return;
+        }
+
+        // 4) Çarpışma yoksa küp pozisyonunu güncelle
+        cubeGroupPosition = newPosition;
+        lastDropTime = currentTime; 
+    }
+}
+
 
 void renderText(const std::string& text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color)
 {
@@ -524,6 +676,44 @@ void renderText(const std::string& text, GLfloat x, GLfloat y, GLfloat scale, gl
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+void drawSettledBlocks()
+{
+    // Her sabit kutu için
+    for (const auto& blockBox : settledBlocks)
+    {
+        // blockBox.min ve blockBox.max var. 
+        // Ortasını bulmak için:
+        glm::vec3 center = 0.5f * (blockBox.min + blockBox.max); 
+        // Bu kutunun boyutu 3x3x3 ise:
+        // (Düşerken de 3×3 boyutlu demiştik.)
+        // Asıl mantık: 3×3’lük küçük küp dizisini 
+        // blockBox’ın merkezine göre translate edip çizmek.
+
+        // 3×3’lük çizim (küçük küpler) yapacaksanız:
+        for(int i=0; i<3; i++){
+            for(int j=0; j<3; j++){
+                for(int k=0; k<3; k++){
+                    glm::vec3 offset(i - 1.5f, j - 1.5f, k - 1.5f);
+                    // blockBox’ın ortasına offset ekle
+                    glm::mat4 model = glm::translate(glm::mat4(1.0f), center + offset);
+
+                    // Dolgu
+                    glUseProgram(gProgram[0]);
+                    glUniformMatrix4fv(modelingMatrixLoc[0], 1, GL_FALSE, glm::value_ptr(model));
+                    glUniform3fv(kdLoc[0], 1, glm::value_ptr(kdCubes));
+                    drawCube();
+
+                    // Kenar
+                    glUseProgram(gProgram[1]);
+                    glUniformMatrix4fv(modelingMatrixLoc[1], 1, GL_FALSE, glm::value_ptr(model));
+                    glm::vec3 edgeColor(1.0f, 1.0f, 1.0f);
+                    glUniform3fv(kdLoc[1], 1, glm::value_ptr(edgeColor));
+                    drawCubeEdges();
+                }
+            }
+        }
+    }
+}
 
 void display()
 {
@@ -533,27 +723,9 @@ void display()
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
     drawGround();
-    float initialCubeHeight = 7.0f;
-
-    for(int i=0; i<3; i++){
-        for(int j=0; j<3; j++){
-            for(int k=0; k<3; k++){
-                glm::vec3 offset(i - 1.5f, j - 1.5f +  initialCubeHeight, k - 1.5f);
-                glm::mat4 model = glm::translate(glm::mat4(1.5f), cubeGroupPosition + offset);
-
-                glUseProgram(gProgram[0]);
-                glUniformMatrix4fv(modelingMatrixLoc[0], 1, GL_FALSE, glm::value_ptr(model));
-                glUniform3fv(kdLoc[0], 1, glm::value_ptr(kdCubes));
-                drawCube();
-
-                glUseProgram(gProgram[1]);
-                glUniformMatrix4fv(modelingMatrixLoc[1], 1, GL_FALSE, glm::value_ptr(model));
-                glm::vec3 edgeColor(1.0f, 1.0f, 1.0f);
-                glUniform3fv(kdLoc[1], 1, glm::value_ptr(edgeColor));
-                drawCubeEdges();
-            }
-        }
-    }
+    drawFallingCube();
+    drawSettledBlocks();
+    
     renderText("tetrisGL", gWidth/2 - 55, gHeight/2 - 60, 0.75, glm::vec3(1, 1, 0));
 
     assert(glGetError() == GL_NO_ERROR);
@@ -569,21 +741,20 @@ void reshape(GLFWwindow* window, int w, int h)
 
     glViewport(0, 0, w, h);
 
-	// Use perspective projection
+    float fovyRad = (float)(45.0 / 180.0) * M_PI;
+    projectionMatrix = glm::perspective(fovyRad, gWidth / (float)gHeight, 1.0f, 100.0f);
 
-	float fovyRad = (float) (45.0 / 180.0) * M_PI;
-	projectionMatrix = glm::perspective(fovyRad, gWidth / (float) gHeight, 1.0f, 100.0f);
+    // Kamera matrisini bir kez daha güncelle
+    initCamera();
 
-    // always look toward (0, 0, 0)
-	viewingMatrix = glm::lookAt(eyePos, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
-
+    // Projeksiyon matrisini shader'a gönder
     for (int i = 0; i < 2; ++i)
     {
         glUseProgram(gProgram[i]);
         glUniformMatrix4fv(projectionMatrixLoc[i], 1, GL_FALSE, glm::value_ptr(projectionMatrix));
-        glUniformMatrix4fv(viewingMatrixLoc[i], 1, GL_FALSE, glm::value_ptr(viewingMatrix));
     }
 }
+
 
 void keyboard(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
@@ -592,28 +763,49 @@ void keyboard(GLFWwindow* window, int key, int scancode, int action, int mods)
         glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
 
-    if (action == GLFW_PRESS) {
+    if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+        glm::vec3 right = getCameraRightVector();
+
         if (key == GLFW_KEY_H) {
             targetCameraAngle -= 90.0f;
-        } else if (key == GLFW_KEY_K) {
+        } 
+        else if (key == GLFW_KEY_K) {
             targetCameraAngle += 90.0f;
-        }
-        else if (key == GLFW_KEY_A){
-            glm::vec3 right = getCameraRightVector();
-            cubeGroupPosition -= right * 1.0f;
-        }
-        else if (key == GLFW_KEY_D){
-            glm::vec3 right = getCameraRightVector();
-            cubeGroupPosition += right * 1.0f;
+        } 
+        else if (key == GLFW_KEY_A) {
+            glm::vec3 newPosition = cubeGroupPosition - right * 1.0f;
+            BoundingBox currentCube(newPosition, glm::vec3(2.99f, 2.99f, 2.99f));
+            if (!checkGroundCollision(currentCube) && !checkBlockCollision(currentCube)) {
+                cubeGroupPosition = newPosition;
+            }
+        } 
+        else if (key == GLFW_KEY_D) {
+            glm::vec3 newPosition = cubeGroupPosition + right * 1.0f;
+            BoundingBox currentCube(newPosition, glm::vec3(2.99f, 2.99f, 2.99f));
+            if (!checkGroundCollision(currentCube) && !checkBlockCollision(currentCube)) {
+                cubeGroupPosition = newPosition;
+            }
+        } 
+        else if (key == GLFW_KEY_S) {
+            // Blok düşme hızını artır
+            cubeDropInterval = glm::max(0.1f, cubeDropInterval - 0.1f); // Minimum 0.1 saniye
+        } 
+        else if (key == GLFW_KEY_W) {
+            // Blok düşme hızını azalt
+            cubeDropInterval = glm::min(2.0f, cubeDropInterval + 0.1f); // Maksimum 2.0 saniye
         }
     }
 }
+
+
 
 void mainLoop(GLFWwindow* window)
 {
     while (!glfwWindowShouldClose(window))
     {
         bool cameraMoved = false;
+        float currentTime = glfwGetTime(); // Mevcut zamanı alın
+        updateCubePosition(currentTime);   // Küp pozisyonunu güncelle
 
         if (fabs(targetCameraAngle - cameraAngle) > 0.1f) {
 
@@ -653,6 +845,7 @@ void mainLoop(GLFWwindow* window)
             {
                 glUseProgram(gProgram[i]);
                 glUniform3fv(lightPosLoc[i], 1, glm::value_ptr(lightPos));
+                initLight();
             }
         }
 
