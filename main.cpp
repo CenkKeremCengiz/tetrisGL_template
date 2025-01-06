@@ -1,6 +1,6 @@
 //
 // Author: Ahmet Oguz Akyuz
-// 
+//
 // This is a sample code that draws a single block piece at the center
 // of the window. It does many boilerplate work for you -- but no
 // guarantees are given about the optimality and bug-freeness of the
@@ -19,6 +19,7 @@
 #include <sstream>
 #include <vector>
 #include <map>
+#include <algorithm>
 #define _USE_MATH_DEFINES
 #include <math.h>
 #include <GL/glew.h>
@@ -26,13 +27,20 @@
 #include <GLFW/glfw3.h> // The GLFW header
 #include <glm/glm.hpp> // GL Math library header
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp> 
+#include <glm/gtc/type_ptr.hpp>
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
 #define BUFFER_OFFSET(i) ((char*)NULL + (i))
 
 using namespace std;
+
+enum class View {
+    Front,
+    Left,
+    Back,
+    Right
+};
 
 GLuint gProgram[3];
 int gWidth = 600, gHeight = 1000;
@@ -49,7 +57,7 @@ GLint lightPosLoc[2];
 GLint kdLoc[2];
 
 // **********************************************
-glm::vec3 cubeGroupPosition(0.0f, 7.0f, 0.0f); // İlk küp başlangıç pozisyonu
+glm::vec3 cubeGroupPosition(0.0f, 7.0f, 0.0f);
 float cameraAngle      = 0.0f;
 float targetCameraAngle = 0.0f;
 float cameraRadius     = 24.0f;
@@ -61,6 +69,12 @@ const float CUBE_GROUP_HALF_SIZE = 1.5f;
 
 float lightYOffset = 5.0f;
 
+std::string currentViewName = "Front";
+
+bool gameOver = false;
+
+bool cameraMoved;
+
 // **********************************************
 
 
@@ -70,12 +84,15 @@ glm::mat4 modelingMatrix = glm::mat4(1.f);
 glm::vec3 eyePos = glm::vec3(0, 0, 24);
 glm::vec3 lightPos = glm::vec3(0, 0, 7);
 
-glm::vec3 kdGround(0.334, 0.288, 0.635); 
+glm::vec3 kdGround(0.334, 0.288, 0.635);
 glm::vec3 kdCubes(0.86, 0.11, 0.31);
 
 float lastDropTime = 0.0f;     // Son düşme zamanı (başlangıçta sıfır)
-float cubeDropInterval = 0.5f; // Küplerin düşme aralığı (0.5 saniye)
+float cubeDropInterval = 99999.0f; // Küplerin düşme aralığı (0.5 saniye)
 bool gameRunning = true;       // Oyun başlangıçta çalışır durumda
+
+
+int score = 0;
 
 int activeProgramIndex = 0;
 
@@ -107,7 +124,7 @@ bool ReadDataFromFile(
 {
     fstream myfile;
 
-    // Open the input 
+    // Open the input
     myfile.open(fileName.c_str(), std::ios::in);
 
     if (myfile.is_open())
@@ -133,6 +150,36 @@ bool ReadDataFromFile(
     return true;
 }
 
+View getCurrentView(float angle) {
+    angle = fmod(angle, 360.0f);
+    if (angle < 0.0f) angle += 360.0f;
+
+    if (angle >= 315.0f || angle < 45.0f)
+        return View::Front;
+    else if (angle >= 45.0f && angle < 135.0f)
+        return View::Left;
+    else if (angle >= 135.0f && angle < 225.0f)
+        return View::Back;
+    else
+        return View::Right;
+}
+
+std::string viewToString(View view) {
+    switch (view) {
+        case View::Front:
+            return "Front";
+        case View::Left:
+            return "Left";
+        case View::Back:
+            return "Back";
+        case View::Right:
+            return "Right";
+        default:
+            return "Unknown";
+    }
+}
+
+
 GLuint createVS(const char* shaderName)
 {
     string shaderSource;
@@ -155,7 +202,7 @@ GLuint createVS(const char* shaderName)
     glGetShaderInfoLog(vs, 1024, &length, output);
     printf("VS compile log: %s\n", output);
 
-	return vs;
+        return vs;
 }
 
 GLuint createFS(const char* shaderName)
@@ -180,7 +227,7 @@ GLuint createFS(const char* shaderName)
     glGetShaderInfoLog(fs, 1024, &length, output);
     printf("FS compile log: %s\n", output);
 
-	return fs;
+        return fs;
 }
 
 void initFonts(int windowWidth, int windowHeight)
@@ -213,12 +260,12 @@ void initFonts(int windowWidth, int windowHeight)
     FT_Set_Pixel_Sizes(face, 0, 48);
 
     // Disable byte-alignment restriction
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1); 
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
     // Load first 128 characters of ASCII set
     for (GLubyte c = 0; c < 128; c++)
     {
-        // Load character glyph 
+        // Load character glyph
         if (FT_Load_Char(face, c, FT_LOAD_RENDER))
         {
             std::cout << "ERROR::FREETYTPE: Failed to load Glyph" << std::endl;
@@ -274,35 +321,35 @@ void initFonts(int windowWidth, int windowHeight)
 
 void initShaders()
 {
-	// Create the programs
+        // Create the programs
 
     gProgram[0] = glCreateProgram();
-	gProgram[1] = glCreateProgram();
-	gProgram[2] = glCreateProgram();
+        gProgram[1] = glCreateProgram();
+        gProgram[2] = glCreateProgram();
 
-	// Create the shaders for both programs
+        // Create the shaders for both programs
 
     GLuint vs1 = createVS("vert.glsl"); // for cube shading
     GLuint fs1 = createFS("frag.glsl");
 
-	GLuint vs2 = createVS("vert2.glsl"); // for border shading
-	GLuint fs2 = createFS("frag2.glsl");
+        GLuint vs2 = createVS("vert2.glsl"); // for border shading
+        GLuint fs2 = createFS("frag2.glsl");
 
-	GLuint vs3 = createVS("vert_text.glsl");  // for text shading
-	GLuint fs3 = createFS("frag_text.glsl");
+        GLuint vs3 = createVS("vert_text.glsl");  // for text shading
+        GLuint fs3 = createFS("frag_text.glsl");
 
-	// Attach the shaders to the programs
+        // Attach the shaders to the programs
 
-	glAttachShader(gProgram[0], vs1);
-	glAttachShader(gProgram[0], fs1);
+        glAttachShader(gProgram[0], vs1);
+        glAttachShader(gProgram[0], fs1);
 
-	glAttachShader(gProgram[1], vs2);
-	glAttachShader(gProgram[1], fs2);
+        glAttachShader(gProgram[1], vs2);
+        glAttachShader(gProgram[1], fs2);
 
-	glAttachShader(gProgram[2], vs3);
-	glAttachShader(gProgram[2], fs3);
+        glAttachShader(gProgram[2], vs3);
+        glAttachShader(gProgram[2], fs3);
 
-	// Link the programs
+        // Link the programs
 
     for (int i = 0; i < 3; ++i)
     {
@@ -318,23 +365,23 @@ void initShaders()
     }
 
 
-	// Get the locations of the uniform variables from both programs
+        // Get the locations of the uniform variables from both programs
 
-	for (int i = 0; i < 2; ++i)
-	{
-		modelingMatrixLoc[i] = glGetUniformLocation(gProgram[i], "modelingMatrix");
-		viewingMatrixLoc[i] = glGetUniformLocation(gProgram[i], "viewingMatrix");
-		projectionMatrixLoc[i] = glGetUniformLocation(gProgram[i], "projectionMatrix");
-		eyePosLoc[i] = glGetUniformLocation(gProgram[i], "eyePos");
-		lightPosLoc[i] = glGetUniformLocation(gProgram[i], "lightPos");
-		kdLoc[i] = glGetUniformLocation(gProgram[i], "kd");
+        for (int i = 0; i < 2; ++i)
+        {
+                modelingMatrixLoc[i] = glGetUniformLocation(gProgram[i], "modelingMatrix");
+                viewingMatrixLoc[i] = glGetUniformLocation(gProgram[i], "viewingMatrix");
+                projectionMatrixLoc[i] = glGetUniformLocation(gProgram[i], "projectionMatrix");
+                eyePosLoc[i] = glGetUniformLocation(gProgram[i], "eyePos");
+                lightPosLoc[i] = glGetUniformLocation(gProgram[i], "lightPos");
+                kdLoc[i] = glGetUniformLocation(gProgram[i], "kd");
 
         glUseProgram(gProgram[i]);
         glUniformMatrix4fv(modelingMatrixLoc[i], 1, GL_FALSE, glm::value_ptr(modelingMatrix));
         glUniform3fv(eyePosLoc[i], 1, glm::value_ptr(eyePos));
         glUniform3fv(lightPosLoc[i], 1, glm::value_ptr(lightPos));
         glUniform3fv(kdLoc[i], 1, glm::value_ptr(kdCubes));
-	}
+        }
 }
 
 // VBO setup for drawing a cube and its borders
@@ -345,17 +392,17 @@ void initVBO()
     assert(vao > 0);
     glBindVertexArray(vao);
 
-	glEnableVertexAttribArray(0);
-	glEnableVertexAttribArray(1);
-	assert(glGetError() == GL_NONE);
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        assert(glGetError() == GL_NONE);
 
-	glGenBuffers(1, &gVertexAttribBuffer);
-	glGenBuffers(1, &gIndexBuffer);
+        glGenBuffers(1, &gVertexAttribBuffer);
+        glGenBuffers(1, &gIndexBuffer);
 
-	assert(gVertexAttribBuffer > 0 && gIndexBuffer > 0);
+        assert(gVertexAttribBuffer > 0 && gIndexBuffer > 0);
 
-	glBindBuffer(GL_ARRAY_BUFFER, gVertexAttribBuffer);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gIndexBuffer);
+        glBindBuffer(GL_ARRAY_BUFFER, gVertexAttribBuffer);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gIndexBuffer);
 
     GLuint indices[] = {
         0, 1, 2, // front
@@ -399,26 +446,26 @@ void initVBO()
          1.0,  1.0,  1.0, // 3: unused
         -1.0,  0.0,  0.0, // 4: left
          1.0,  0.0,  0.0, // 5: right
-         0.0,  0.0, -1.0, // 6: back 
+         0.0,  0.0, -1.0, // 6: back
          0.0,  1.0,  0.0, // 7: top
     };
 
-	gVertexDataSizeInBytes = sizeof(vertexPos);
-	gNormalDataSizeInBytes = sizeof(vertexNor);
+        gVertexDataSizeInBytes = sizeof(vertexPos);
+        gNormalDataSizeInBytes = sizeof(vertexNor);
     gTriangleIndexDataSizeInBytes = sizeof(indices);
     gLineIndexDataSizeInBytes = sizeof(indicesLines);
     int allIndexSize = gTriangleIndexDataSizeInBytes + gLineIndexDataSizeInBytes;
 
-	glBufferData(GL_ARRAY_BUFFER, gVertexDataSizeInBytes + gNormalDataSizeInBytes, 0, GL_STATIC_DRAW);
-	glBufferSubData(GL_ARRAY_BUFFER, 0, gVertexDataSizeInBytes, vertexPos);
-	glBufferSubData(GL_ARRAY_BUFFER, gVertexDataSizeInBytes, gNormalDataSizeInBytes, vertexNor);
+        glBufferData(GL_ARRAY_BUFFER, gVertexDataSizeInBytes + gNormalDataSizeInBytes, 0, GL_STATIC_DRAW);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, gVertexDataSizeInBytes, vertexPos);
+        glBufferSubData(GL_ARRAY_BUFFER, gVertexDataSizeInBytes, gNormalDataSizeInBytes, vertexNor);
 
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, allIndexSize, 0, GL_STATIC_DRAW);
-	glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, gTriangleIndexDataSizeInBytes, indices);
-	glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, gTriangleIndexDataSizeInBytes, gLineIndexDataSizeInBytes, indicesLines);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, allIndexSize, 0, GL_STATIC_DRAW);
+        glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, gTriangleIndexDataSizeInBytes, indices);
+        glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, gTriangleIndexDataSizeInBytes, gLineIndexDataSizeInBytes, indicesLines);
 
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(gVertexDataSizeInBytes));
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(gVertexDataSizeInBytes));
 }
 void initCamera()
 {
@@ -459,7 +506,7 @@ void initLight()
 }
 
 
-void init() 
+void init()
 {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
@@ -477,19 +524,19 @@ void init()
 
 void drawCube()
 {
-	glUseProgram(gProgram[0]);
-	glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        glUseProgram(gProgram[0]);
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
 }
 
 void drawCubeEdges()
 {
     glLineWidth(3);
 
-	glUseProgram(gProgram[1]);
+        glUseProgram(gProgram[1]);
 
     for (int i = 0; i < 6; ++i)
     {
-	    glDrawElements(GL_LINE_LOOP, 4, GL_UNSIGNED_INT, BUFFER_OFFSET(gTriangleIndexDataSizeInBytes + i * 4 * sizeof(GLuint)));
+            glDrawElements(GL_LINE_LOOP, 4, GL_UNSIGNED_INT, BUFFER_OFFSET(gTriangleIndexDataSizeInBytes + i * 4 * sizeof(GLuint)));
     }
 }
 
@@ -591,52 +638,105 @@ bool checkGroundCollision(const BoundingBox& cubeBox) {
 bool checkBlockCollision(const BoundingBox& cubeBox) {
     for (const auto& block : settledBlocks) {
         if (cubeBox.intersects(block)) {
-            return true; 
+            return true;
         }
     }
     return false;
 }
 
 
+void checkLineCompletion() {
+    std::map<float, std::vector<BoundingBox>> levelMap;
+
+    for(const auto& block : settledBlocks) {
+        levelMap[block.min.y].push_back(block);
+    }
+
+    for (auto it = levelMap.begin(); it != levelMap.end(); ++it) {
+        float y = it->first;  // The key (y-level)
+        const std::vector<BoundingBox>& blockList = it->second;  // The value (vector of blocks)
+
+    }
+
+    for(const auto& [level, levelBlocks] : levelMap) {
+        if(levelBlocks.size() == 9) {
+            // Remove completed level
+            settledBlocks.erase(
+                std::remove_if(settledBlocks.begin(), settledBlocks.end(),
+                    [level](const BoundingBox& b) { return b.min.y == level; }
+                ),
+                settledBlocks.end()
+            );
+
+            // Move blocks down
+            for(auto& block : settledBlocks) {
+                if(block.min.y > level) {
+                    block.min.y -= 3.0f;
+                    block.max.y -= 3.0f;
+                }
+            }
+
+            score += 243;
+        }
+    }
+}
+
 void updateCubePosition(float currentTime) {
-    // Belirli zaman aralığında (cubeDropInterval=0.5s) bir adım düş
-    if (currentTime - lastDropTime >= cubeDropInterval && gameRunning) {
-        // 1) Küpün yeni pozisyonu
+    if (gameOver || !gameRunning) return; // Stop updates if the game is over
+
+    // Drop the cube at regular intervals
+    if (currentTime - lastDropTime >= cubeDropInterval) {
         glm::vec3 newPosition = cubeGroupPosition;
-        newPosition.y -= 1.0f;  // 1 birim düş
+        newPosition.y -= 1.0f; // Move down 1 unit
 
-        // 2) Bu yeni pozisyon için bounding box
-        BoundingBox currentCube(newPosition, glm::vec3(2.99, 2.99f, 2.99f));
+        BoundingBox currentCube(newPosition, glm::vec3(2.99f, 2.99f, 2.99f));
 
-        // 3) Zemin veya diğer bloklarla çarpışma var mı?
+        // Check for collision with ground or blocks
         if (checkGroundCollision(currentCube) || checkBlockCollision(currentCube)) {
-            // Küp sabitlenir:
-            // (Eski pozisyonla bounding box ekliyoruz)
-            settledBlocks.push_back(BoundingBox(cubeGroupPosition, glm::vec3(2.99f,2.99f,2.99f)));
+            // Add the block to the settled list
+            BoundingBox settledBlock(cubeGroupPosition, glm::vec3(2.99f, 2.99f, 2.99f));
+            settledBlocks.push_back(settledBlock);
 
-            // Yeni küp oluştur
-            cubeGroupPosition = glm::vec3(0.0f, 7.0f, 0.0f); // Yukarıdan yeniden başlat
-            lastDropTime = currentTime;   // Timer reset
+            // Update the grid
+            // markGroundGrid(settledBlock);
+
+            // // Check if the ground is full
+            // if (isGroundFull()) {
+            //     clearGroundAndMoveBlocksDown();
+            // }
+
+            checkLineCompletion();
+
+            // Create a new block
+            cubeGroupPosition = glm::vec3(0.0f, 7.0f, 0.0f);
+
+            // Check for Game Over: If the new block overlaps with settled blocks
+            BoundingBox newCube(cubeGroupPosition, glm::vec3(2.99f, 2.99f, 2.99f));
+            if (checkBlockCollision(newCube)) {
+                gameOver = true; // Set game over
+            }
+
+            lastDropTime = currentTime; // Reset timer
             return;
         }
 
-        // 4) Çarpışma yoksa küp pozisyonunu güncelle
+        // No collision, update position
         cubeGroupPosition = newPosition;
-        lastDropTime = currentTime; 
+        lastDropTime = currentTime;
     }
 }
 
 
 void renderText(const std::string& text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color)
 {
-    // Activate corresponding render state	
+    // Activate corresponding render state
     glUseProgram(gProgram[2]);
     glUniform3f(glGetUniformLocation(gProgram[2], "textColor"), color.x, color.y, color.z);
     glActiveTexture(GL_TEXTURE0);
 
     // Iterate through all characters
     std::string::const_iterator c;
-    for (c = text.begin(); c != text.end(); c++) 
+    for (c = text.begin(); c != text.end(); c++)
     {
         Character ch = Characters[*c];
 
@@ -648,13 +748,13 @@ void renderText(const std::string& text, GLfloat x, GLfloat y, GLfloat scale, gl
 
         // Update VBO for each character
         GLfloat vertices[6][4] = {
-            { xpos,     ypos + h,   0.0, 0.0 },            
+            { xpos,     ypos + h,   0.0, 0.0 },
             { xpos,     ypos,       0.0, 1.0 },
             { xpos + w, ypos,       1.0, 1.0 },
 
             { xpos,     ypos + h,   0.0, 0.0 },
             { xpos + w, ypos,       1.0, 1.0 },
-            { xpos + w, ypos + h,   1.0, 0.0 }           
+            { xpos + w, ypos + h,   1.0, 0.0 }
         };
 
         // Render glyph texture over quad
@@ -681,12 +781,12 @@ void drawSettledBlocks()
     // Her sabit kutu için
     for (const auto& blockBox : settledBlocks)
     {
-        // blockBox.min ve blockBox.max var. 
+        // blockBox.min ve blockBox.max var.
         // Ortasını bulmak için:
-        glm::vec3 center = 0.5f * (blockBox.min + blockBox.max); 
+        glm::vec3 center = 0.5f * (blockBox.min + blockBox.max);
         // Bu kutunun boyutu 3x3x3 ise:
         // (Düşerken de 3×3 boyutlu demiştik.)
-        // Asıl mantık: 3×3’lük küçük küp dizisini 
+        // Asıl mantık: 3×3’lük küçük küp dizisini
         // blockBox’ın merkezine göre translate edip çizmek.
 
         // 3×3’lük çizim (küçük küpler) yapacaksanız:
@@ -725,11 +825,22 @@ void display()
     drawGround();
     drawFallingCube();
     drawSettledBlocks();
-    
-    renderText("tetrisGL", gWidth/2 - 55, gHeight/2 - 60, 0.75, glm::vec3(1, 1, 0));
+
+    // Render "Game Over" if the game has ended
+    if (gameOver) {
+        std::string gameOverText = "Game Over";
+        // Calculate the position to center the text
+        GLfloat textScale = 1.0f;
+        GLfloat textWidth = gameOverText.length() * 25.0f * textScale; // Approximate width
+        GLfloat x = (gWidth - textWidth) / 2.0f;
+        GLfloat y = gHeight / 2.0f;
+
+        renderText(gameOverText, x, y, textScale, glm::vec3(1.0f, 0.0f, 0.0f)); // Red color
+    }
 
     assert(glGetError() == GL_NO_ERROR);
 }
+
 
 void reshape(GLFWwindow* window, int w, int h)
 {
@@ -763,39 +874,50 @@ void keyboard(GLFWwindow* window, int key, int scancode, int action, int mods)
         glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
 
-    if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+    if (action == GLFW_PRESS && gameRunning && !gameOver) { // Only accept inputs if the game is running
         glm::vec3 right = getCameraRightVector();
 
         if (key == GLFW_KEY_H) {
             targetCameraAngle -= 90.0f;
-        } 
+        }
         else if (key == GLFW_KEY_K) {
             targetCameraAngle += 90.0f;
-        } 
-        else if (key == GLFW_KEY_A) {
+        }
+        else if (key == GLFW_KEY_A && !cameraMoved) {
             glm::vec3 newPosition = cubeGroupPosition - right * 1.0f;
             BoundingBox currentCube(newPosition, glm::vec3(2.99f, 2.99f, 2.99f));
             if (!checkGroundCollision(currentCube) && !checkBlockCollision(currentCube)) {
                 cubeGroupPosition = newPosition;
             }
-        } 
-        else if (key == GLFW_KEY_D) {
+        }
+        else if (key == GLFW_KEY_D && !cameraMoved) {
             glm::vec3 newPosition = cubeGroupPosition + right * 1.0f;
             BoundingBox currentCube(newPosition, glm::vec3(2.99f, 2.99f, 2.99f));
             if (!checkGroundCollision(currentCube) && !checkBlockCollision(currentCube)) {
                 cubeGroupPosition = newPosition;
             }
-        } 
+        }
         else if (key == GLFW_KEY_S) {
-            // Blok düşme hızını artır
-            cubeDropInterval = glm::max(0.1f, cubeDropInterval - 0.1f); // Minimum 0.1 saniye
-        } 
+            // Increase the drop speed
+            if(cubeDropInterval == 99999.0f){
+                cubeDropInterval = 1.0f;
+            }
+            cubeDropInterval = glm::max(0.1f, cubeDropInterval - 0.1f); // Minimum 0.1 seconds
+
+        }
         else if (key == GLFW_KEY_W) {
-            // Blok düşme hızını azalt
-            cubeDropInterval = glm::min(2.0f, cubeDropInterval + 0.1f); // Maksimum 2.0 saniye
+            // Decrease the drop speed
+            if(cubeDropInterval == 1.0f){
+                cubeDropInterval = 99999.0f;
+            }
+            else if(cubeDropInterval == 99999.0f){}
+            else{
+                cubeDropInterval = glm::min(1.0f, cubeDropInterval + 0.1f); // Maximum 2.0 seconds
+            }
         }
     }
 }
+
 
 
 
@@ -803,10 +925,10 @@ void mainLoop(GLFWwindow* window)
 {
     while (!glfwWindowShouldClose(window))
     {
-        bool cameraMoved = false;
-        float currentTime = glfwGetTime(); // Mevcut zamanı alın
-        updateCubePosition(currentTime);   // Küp pozisyonunu güncelle
+        float currentTime = glfwGetTime(); // Current time
+        updateCubePosition(currentTime);   // Update cube position
 
+        // Update camera rotation
         if (fabs(targetCameraAngle - cameraAngle) > 0.1f) {
 
             cameraMoved = true;
@@ -818,7 +940,8 @@ void mainLoop(GLFWwindow* window)
                 cameraAngle -= rotationSpeed;
                 if (cameraAngle < targetCameraAngle) cameraAngle = targetCameraAngle;
             }
-            
+
+            // Update camera position based on new angle
             float cameraAngleRad = glm::radians(cameraAngle);
 
             float camX = cameraRadius * cos(cameraAngleRad);
@@ -838,6 +961,14 @@ void mainLoop(GLFWwindow* window)
             lightPos = eyePos + forward * 7.0f + glm::vec3(0.0f, lightYOffset, 0.0f);
 
             cameraMoved = true;
+        } else {
+            // Rotation completed, update the view name
+            View newView = getCurrentView(cameraAngle);
+            std::string newViewName = viewToString(newView);
+            if (newViewName != currentViewName) {
+                currentViewName = newViewName;
+            }
+            cameraMoved = false;
         }
 
         if (cameraMoved) {
@@ -849,14 +980,22 @@ void mainLoop(GLFWwindow* window)
             }
         }
 
+        // Clamp cube position within game area
         cubeGroupPosition.x = glm::clamp(cubeGroupPosition.x, -GAME_AREA_HALF_SIZE + CUBE_GROUP_HALF_SIZE, GAME_AREA_HALF_SIZE - CUBE_GROUP_HALF_SIZE);
         cubeGroupPosition.z = glm::clamp(cubeGroupPosition.z, -GAME_AREA_HALF_SIZE + CUBE_GROUP_HALF_SIZE, GAME_AREA_HALF_SIZE - CUBE_GROUP_HALF_SIZE);
 
+        // Render the scene
         display();
+
+        // Render the current view name
+        // Position: (10, gHeight - 30) to place it near the top-left corner
+        renderText(currentViewName, 10.0f, gHeight - 30.0f, 0.75f, glm::vec3(1.0f, 1.0f, 0.0f));
+
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 }
+
 
 
 
